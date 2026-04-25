@@ -1,5 +1,9 @@
 #include "systemcalls.h"
-
+#include <syslog.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <stdlib.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -17,6 +21,29 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
+    if (system(NULL) == 0) {
+        syslog(LOG_ERR,"No shell available");
+        return false;
+    }
+
+    int value = system(cmd); 
+
+    if(value == -1) {
+        syslog(LOG_ERR,"The child process could not be created"); 
+        return false; 
+    }  
+
+    else if(value == 127){
+        syslog(LOG_ERR,"The shell could not be excecuted"); 
+        return false;
+    }
+
+    else if(value !=0){
+        syslog(LOG_ERR,"Error in child process with value %d",value);
+        return false;
+    }
+
+    syslog(LOG_INFO,"The execution was a success"); 
     return true;
 }
 
@@ -58,9 +85,34 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    int fork_return = fork();
+    int status;
+
+    if(fork_return == -1){
+        syslog(LOG_ERR,"New process could not be created with fork");
+        return false;
+
+    }
+
+    else if (fork_return == 0){
+
+        if(execv(command[0],command) == -1){
+            syslog(LOG_ERR,"execv function failed");
+            exit(1);
+        }
+    }
+
+    else {
+        waitpid(fork_return,&status,0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0){
+            syslog(LOG_ERR,"Child process could not end successfully");
+            return false;
+        }
+    }
 
     va_end(args);
 
+    syslog(LOG_INFO,"do_exec function ended graciously");
     return true;
 }
 
@@ -93,7 +145,43 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
-    va_end(args);
+    int  fd =  open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    
+    if(fd == -1){
+        syslog(LOG_ERR,"File could not be opened");       
+        return false;   
+    }
 
+
+    int fork_return = fork();
+    int status;
+
+    if(fork_return == -1){
+        syslog(LOG_ERR,"New process could not be created with fork");
+        return false;
+
+    }
+
+    else if (fork_return == 0){
+        dup2(fd,1);
+        if(execv(command[0],command) == -1){
+            syslog(LOG_ERR,"execv function failed");
+            exit(1);
+        }
+    }
+
+    
+    else {
+        waitpid(fork_return,&status,0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0){
+            syslog(LOG_ERR,"Child process could not end successfully");
+            return false;
+        }
+    }
+
+
+
+    va_end(args);
+    syslog(LOG_INFO,"do_exec function ended graciously");
     return true;
 }
